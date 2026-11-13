@@ -29,13 +29,12 @@ void handleWiFi()
     return;
   }
 
-  Serial.println("Wi-Fi is not available");
-
   if (currentTime - lastPrintTime > 3000) 
   {
     lastPrintTime = currentTime;
     int currentStatus = WiFi.status();
-    Serial.printf("Wi-Fi Status Code: %d ", currentStatus);
+
+    Serial.println("Wi-Fi is not available. Status Code: " + String(currentStatus));
 
     if(currentStatus == 6 && (currentTime - lastRetryTime > 7000))
     {
