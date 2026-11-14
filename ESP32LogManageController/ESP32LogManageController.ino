@@ -45,6 +45,46 @@ void handleWiFi()
   }
 }
 
+void appendFileRows(const char* dirname, String& html, bool& hasFiles) 
+{
+  File root = LittleFS.open(dirname, "r");
+
+  if (!root || !root.isDirectory()) 
+    return;
+
+  File file = root.openNextFile();
+
+  while (file) 
+  {
+    String path = String(file.path());
+
+    if (!path.startsWith("/")) 
+      path = "/" + path;
+
+    if (file.isDirectory()) 
+    {
+      file.close();
+      appendFileRows(path.c_str(), html, hasFiles);
+    } 
+    else 
+    {
+      hasFiles = true;
+      html += "<tr>";
+      html += "<td class='fw-medium'>" + path + "</td>";
+      html += "<td>" + String(file.size()) + " bytes</td>";
+      html += "<td class='text-end'>";
+      html += "<a href='/download?file=" + path + "' class='btn btn-sm btn-success me-1'>Download</a>";
+      html += "<a href='/delete?file=" + path + "' class='btn btn-sm btn-outline-danger' onclick=\"return confirm('Delete " + path + "?');\">Delete</a>";
+      html += "</td></tr>";
+      file.close();
+    }
+
+    file = root.openNextFile();
+  }
+  
+  root.close();
+}
+
 void setup() 
 {
   Serial.begin(115200);
@@ -113,33 +153,12 @@ void setup()
     html += "<div class='table-responsive'><table class='table table-hover align-middle mb-0'>";
     html += "<thead class='table-light'><tr><th>File Name</th><th>Size</th><th class='text-end'>Actions</th></tr></thead><tbody>";
 
-    File root = LittleFS.open("/");
+    File root = LittleFS.open("/", "r");
     File file = root.openNextFile();
     bool hasFiles = false;
 
-    while (file) 
-    {
-      if (!file.isDirectory()) 
-      {
-        hasFiles = true;
-        String fileName = String(file.name());
 
-        if (!fileName.startsWith("/")) 
-        {
-          fileName = "/" + fileName;
-        }
-
-        html += "<tr>";
-        html += "<td class='fw-medium'>" + fileName + "</td>";
-        html += "<td>" + String(file.size()) + " bytes</td>";
-        html += "<td class='text-end'>";
-        html += "<a href='/download?file=" + fileName + "' class='btn btn-sm btn-success me-1'>Download</a>";
-        html += "<a href='/delete?file=" + fileName + "' class='btn btn-sm btn-outline-danger' onclick=\"return confirm('Delete " + fileName + "?');\">Delete</a>";
-        html += "</td></tr>";
-      }
-
-      file = root.openNextFile();
-    }
+    appendFileRows("/", html, hasFiles);
 
     if (!hasFiles) 
     {
