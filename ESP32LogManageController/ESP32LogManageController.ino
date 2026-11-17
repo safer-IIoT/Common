@@ -88,14 +88,12 @@ void appendFileRows(const char* dirname, String& html, bool& hasFiles)
 void setup() 
 {
   Serial.begin(115200);
-  if (!LittleFS.begin(true)) 
+  if (!LittleFS.begin(false)) 
   {
     Serial.println("LittleFS mount failed");
     return;
   }
 
-  WiFi.disconnect(true, true);
-  delay(100);
   WiFi.mode(WIFI_STA);
   WiFi.begin(ssid, password);
 
@@ -153,10 +151,7 @@ void setup()
     html += "<div class='table-responsive'><table class='table table-hover align-middle mb-0'>";
     html += "<thead class='table-light'><tr><th>File Name</th><th>Size</th><th class='text-end'>Actions</th></tr></thead><tbody>";
 
-    File root = LittleFS.open("/", "r");
-    File file = root.openNextFile();
     bool hasFiles = false;
-
 
     appendFileRows("/", html, hasFiles);
 
