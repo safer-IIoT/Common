@@ -4,9 +4,12 @@
 #include "FS.h"
 #include "LittleFS.h"
 #define LOG_FS LittleFS
+#include "esp_partition.h"
 
 constexpr size_t N_COLUMNS  = sizeof(CSV_COLUMNS) / sizeof(CSV_COLUMNS[0]);
 constexpr size_t N_READINGS = 15;
+constexpr size_t MAX_VALUES = 32;
+constexpr size_t RX_LINE_LEN = 512;
 
 constexpr size_t MIN_FREE_BYTES_FOR_LOGS = 32768;
 
@@ -14,6 +17,15 @@ double readings[N_READINGS];
 size_t nReadings  = 0;
 unsigned long lastReadMs = 0;
 bool fsMounted = false;
+char   lineBuffer[RX_LINE_LEN];
+size_t lineLength = 0;
+bool   inFrame = false;
+
+double   rxValues[MAX_VALUES];
+size_t   rxCount    = 0;
+bool     rxFresh    = false;
+uint32_t validFrames   = 0;
+uint32_t invalidFrames  = 0;
 
 bool timeSynced = false;
 static uint32_t lastPrintTime = 0;
@@ -235,6 +247,78 @@ bool appendRow()
   return true;
 }
 
+int hexValue(char c) 
+{
+  if (c >= '0' && c <= '9') 
+    return c - '0';
+  if (c >= 'A' && c <= 'F') 
+    return c - 'A' + 10;
+  if (c >= 'a' && c <= 'f') 
+    return c - 'a' + 10;
+  return -1;
+}
+
+bool parseFrame(char* s, size_t len, double* out, size_t maxOut, size_t& count) 
+{
+  if (len && s[len - 1] == '\r') 
+    s[--len] = '\0';
+
+  char* star = strchr(s, '*');
+
+  if (!star || (size_t)(s + len - star) != 3) 
+    return false;
+
+  int high = hexValue(star[1]), low = hexValue(star[2]);
+
+  if (high < 0 || low < 0) 
+    return false;
+
+  uint8_t cs = 0;
+
+  for (char* p = s; p < star; p++) 
+    cs ^= (uint8_t)*p;
+
+  if (cs != (uint8_t)((high << 4) | low)) 
+    return false;
+
+  *star = '\0';
+  count = 0;
+  char* p = s;
+
+  while (true) 
+  {
+    if (count >= maxOut) 
+      return false;
+
+    char* end;
+    double d = strtod(p, &end);
+
+    if (end == p) 
+      return false;
+
+    out[count++] = d;
+
+    if (*end == ',') 
+      p = end + 1;
+    else if (*end == '\0') 
+      break;
+    else 
+      return false;
+  }
+
+  return true;
+}
+
+void onReceiveValues(const double* v, size_t n) 
+{
+  Serial.printf("Received values(%u):", (unsigned)n);
+
+  for (size_t i = 0; i < n; i++) 
+    Serial.printf(" %.4f", v[i]);
+
+  Serial.printf(" | Valid=%lu Invalid=%lu\n", (unsigned long)validFrames, (unsigned long)invalidFrames);
+}
+
 void handleSerial() 
 {
   while (Serial.available()) 
@@ -267,12 +351,78 @@ void handleSerial()
   }
 }
 
+void pollLink() 
+{
+  size_t maxReads = 128; 
+  while (Serial1.available() && maxReads-- > 0) 
+  {
+    char c = (char)Serial1.read();
+
+    if (c == '$') 
+    { 
+      inFrame = true; 
+      lineLength = 0; 
+      continue; 
+    }
+
+    if (!inFrame) 
+      continue;
+
+    if (c == '\n') 
+    {
+      inFrame = false;
+      lineBuffer[lineLength] = '\0';
+      double tmp[MAX_VALUES];
+      size_t n = 0;
+
+      if (parseFrame(lineBuffer, lineLength, tmp, MAX_VALUES, n)) 
+      {
+        memcpy(rxValues, tmp, n * sizeof(double));
+        rxCount = n;
+        rxFresh = true;
+        validFrames++;
+        onReceiveValues(rxValues, rxCount);
+      } 
+      else 
+      {
+        invalidFrames++;
+      }
+
+      continue;
+    }
+
+    if (lineLength >= RX_LINE_LEN - 1) 
+    {  
+      inFrame = false; 
+      invalidFrames++; 
+      continue; 
+    }
+
+    lineBuffer[lineLength++] = c;
+  }
+}
+
 void connectWiFi() 
 {
   WiFi.disconnect(true, true);
   delay(100);
   WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+}
+
+void dumpFS(const char* tag)
+{
+  const esp_partition_t* p = esp_partition_find_first(
+      ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_ANY, "spiffs");
+
+  Serial.printf("[%s] spiffs partition: %s @0x%06x size 0x%x\n", tag,
+                p ? "found" : "MISSING", p ? p->address : 0, p ? p->size : 0);
+  Serial.printf("[%s] LittleFS used %u / %u bytes\n", tag,
+                LittleFS.usedBytes(), LittleFS.totalBytes());
+
+  File root = LittleFS.open("/");
+  for (File f = root.openNextFile(); f; f = root.openNextFile())
+    Serial.printf("  %s  %u\n", f.path(), f.size());
 }
 
 void setup() 
@@ -284,12 +434,14 @@ void setup()
 
   logInfo("Serial initialization ended");
 
-  analogReadResolution(12);
+  Serial1.begin(LINK_BAUD, SERIAL_8N1, LINK_RX_PIN, LINK_TX_PIN);
+  Serial1.setRxBufferSize(1024);
 
   if (LittleFS.begin(false)) 
   {
     fsMounted = true;
     logInfo("LittleFS mounted successfully");
+    //dumpFS("controller");
   } 
   else 
   {
@@ -312,7 +464,9 @@ void setup()
 }
 
 void loop() 
-{  
+{
+  pollLink();
+
   handleSerial();
 
   handleWiFi();
@@ -330,9 +484,6 @@ void loop()
     return;
 
   lastReadMs += READ_INTERVAL_MS;
-
-  int raw = analogRead(GAS_PIN);
-  readings[nReadings++] = constrain(raw * 100.0 / ADC_FULL_SCALE, 0.0, 100.0);
 
   if (nReadings == N_READINGS) 
   {

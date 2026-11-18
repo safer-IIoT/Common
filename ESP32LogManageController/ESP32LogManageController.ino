@@ -2,6 +2,7 @@
 #include <WebServer.h>
 #include "FS.h"
 #include "LittleFS.h"
+#include "esp_partition.h"
 
 #include "secretconfig.h"
 
@@ -85,6 +86,21 @@ void appendFileRows(const char* dirname, String& html, bool& hasFiles)
   root.close();
 }
 
+/*void dumpFS(const char* tag)
+{
+  const esp_partition_t* p = esp_partition_find_first(
+      ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_ANY, "spiffs");
+
+  Serial.printf("[%s] spiffs partition: %s @0x%06x size 0x%x\n", tag,
+                p ? "found" : "MISSING", p ? p->address : 0, p ? p->size : 0);
+  Serial.printf("[%s] LittleFS used %u / %u bytes\n", tag,
+                LittleFS.usedBytes(), LittleFS.totalBytes());
+
+  File root = LittleFS.open("/");
+  for (File f = root.openNextFile(); f; f = root.openNextFile())
+    Serial.printf("  %s  %u\n", f.path(), f.size());
+}*/
+
 void setup() 
 {
   Serial.begin(115200);
@@ -93,6 +109,8 @@ void setup()
     Serial.println("LittleFS mount failed");
     return;
   }
+
+  //dumpFS("logger");
 
   WiFi.mode(WIFI_STA);
   WiFi.begin(ssid, password);

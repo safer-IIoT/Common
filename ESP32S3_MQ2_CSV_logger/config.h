@@ -1,7 +1,8 @@
 #pragma once
 
-// MQ-2 Sensor
-constexpr int           GAS_PIN          = 4;
+#define LINK_BAUD    115200
+#define LINK_RX_PIN  25
+#define LINK_TX_PIN  26
 constexpr unsigned long READ_INTERVAL_MS = 1000;   // one reading per second
 
 constexpr double ADC_FULL_SCALE   = 3102.0;        // raw value that maps to score 100
