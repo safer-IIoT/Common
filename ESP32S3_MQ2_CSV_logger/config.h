@@ -19,7 +19,5 @@ constexpr const char* CSV_COLUMNS[] = {
 };
 
 // ---------- Timestamp ----------
-constexpr char WIFI_SSID[]     = "";
-constexpr char WIFI_PASSWORD[] = "";
 constexpr char NTP_SERVER[]    = "pool.ntp.org";
 constexpr long GMT_OFFSET_SEC  = 19800; // GMT+5:30

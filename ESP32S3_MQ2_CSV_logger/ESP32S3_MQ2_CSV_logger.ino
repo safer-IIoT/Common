@@ -1,10 +1,13 @@
 #include <WiFi.h>
 #include <time.h>
-#include "config.h"
 #include "FS.h"
 #include "LittleFS.h"
 #define LOG_FS LittleFS
 #include "esp_partition.h"
+#include <math.h>
+
+#include "config.h"
+#include "secretconfig.h"
 
 constexpr size_t N_COLUMNS  = sizeof(CSV_COLUMNS) / sizeof(CSV_COLUMNS[0]);
 constexpr size_t N_READINGS = 15;
@@ -14,7 +17,6 @@ constexpr size_t RX_LINE_LEN = 512;
 constexpr size_t MIN_FREE_BYTES_FOR_LOGS = 32768;
 
 double readings[N_READINGS];
-size_t nReadings  = 0;
 unsigned long lastReadMs = 0;
 bool fsMounted = false;
 char   lineBuffer[RX_LINE_LEN];
@@ -222,29 +224,55 @@ void formatTimestamp(char* out, size_t n)
   }
 }
 
-bool appendRow() 
+bool areAllZeros(const double* arr, size_t size, double epsilon = 1e-9) 
 {
-  if (!ensureCsvFile())
-    return false;
+    for (size_t i = 0; i < size; i++) 
+    {
+        if (fabs(arr[i]) > epsilon) 
+        {
+            return false;
+        }
+    }
 
-  File f = LOG_FS.open(CSV_FILE_NAME, FILE_APPEND);
-  if (!f) 
-    return false;
+    return true;
+}
 
-  char ts[24];
-  formatTimestamp(ts, sizeof(ts));
-  f.print(ts);
+void appendRow() 
+{
+  bool zeroReadings = areAllZeros(readings, N_READINGS);
 
-  for (size_t i = 0; i < N_READINGS; i++) 
+  if(!zeroReadings && timeSynced)
   {
-    f.print(',');
-    f.print(readings[i], DECIMALS);
-  }
+    if (ensureCsvFile())
+    {
+      File f = LOG_FS.open(CSV_FILE_NAME, FILE_APPEND);
+      
+      if (!f)
+        logError("Failed to open file to write sensor data");
 
-  f.print(",\n");
-  f.close();
-  logInfo("Row written");
-  return true;
+      char ts[24];
+      formatTimestamp(ts, sizeof(ts));
+      f.print(ts);
+
+      for (size_t i = 0; i < N_READINGS; i++) 
+      {
+        f.print(',');
+        f.print(readings[i], DECIMALS);
+      }
+
+      f.print(",\n");
+      f.close();
+      logInfo("Row written");
+    }
+    else
+    {
+      logError("Error occurred in write sensor data");
+    }      
+  }
+  else
+  {
+    logInfo("All sensor readings are zero or time is unsynced. Thus, no row was written.");
+  } 
 }
 
 int hexValue(char c) 
@@ -313,10 +341,15 @@ void onReceiveValues(const double* v, size_t n)
 {
   Serial.printf("Received values(%u):", (unsigned)n);
 
-  for (size_t i = 0; i < n; i++) 
+  for (size_t i = 0; i < n; i++)
+  {
+    readings[i] = v[i];
     Serial.printf(" %.4f", v[i]);
+  }
 
   Serial.printf(" | Valid=%lu Invalid=%lu\n", (unsigned long)validFrames, (unsigned long)invalidFrames);
+
+  appendRow();
 }
 
 void handleSerial() 
@@ -475,7 +508,6 @@ void loop()
 
   if (!timeSynced)
   {
-    nReadings  = 0;
     lastReadMs = millis();
     return;
   }
@@ -484,11 +516,4 @@ void loop()
     return;
 
   lastReadMs += READ_INTERVAL_MS;
-
-  if (nReadings == N_READINGS) 
-  {
-    if (!appendRow()) 
-      logError("Write failed");
-    nReadings = 0;
-  }
 }
